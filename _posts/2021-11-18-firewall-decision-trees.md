@@ -29,8 +29,8 @@ This rule blocks traffic from `1.1.1.0/24` to `2.2.2.0/24` on `tcp-80`, i.e. `ht
 Usually, to declare rules more efficiently, groups are defined, but no matter how rules are
 represented, they can be broken down into simple 5-tuples. For example, the composite rule
 
-`([1.1.1.0/24, 3.3.3.3], 2.2.2.0/24, tcp, [80, 443]) block`, which means "block http and https traffic from
-1.1.1.0/24 and 3.3.3.3 to 2.2.2.0/24" can be broken down into four simple rules:
+`([1.1.1.0/24, 3.3.3.3], 2.2.2.0/24, tcp, [80, 443]) block`, which means _block http and https traffic from
+1.1.1.0/24 and 3.3.3.3 to 2.2.2.0/24_ can be broken down into four simple rules:
 
 ```
 (1.1.1.0/24, 2.2.2.0/24, tcp, 80) block
@@ -85,9 +85,9 @@ Implementing a tool to do a flow comparison betwen two policies and return the s
 whose actions differ across the policies, is the subject of the solution.
 
 ## Solution
-The task of comparing two policies comprises two steps:
-a. Comparing intersecting flows between the policies for differences in action
-b. Reducing the differing flows to only unshadowed ones
+The task of comparing two policies comprises two steps:<br>
+&nbsp;&nbsp;a. Comparing intersecting flows between the policies for differences in action<br>
+&nbsp;&nbsp;b. Reducing the differing flows to only unshadowed ones
 
 These steps need not be completed in this order; step b) can precede step a) by first reducing the set of flows for
 each policy to unshadowed only and then comparing these flows with each other.
@@ -162,6 +162,11 @@ to merge them while removing overlaps. The runtime complexity is $$O(NlogN)$$ in
 The result of the construction algorithm is a tree whose levels comprise flow field intervals, i.e. level 1 is source intervals,
 level 2 is destination intervals, level 3 is protocol intervals, and level 4 is destination port intervals.
 At the end of each tree path is an action, so the actions can be considered the last level and they make up the leaves of the tree.
+Hence, every path of the tree is a flow, and the total number of unshadowed flows is equal to the number of paths/leaves of the tree.
+
+![Firewall decision tree visualized](/assets/images/fdt/fdt.png)
+_A visual representation of a firewall decision tree. Internally protocols are stored as numeric intervals with equal start and end._
+
 The construction is described on page 1243 of Liu and Gouda, but I have abridged it here:
 1. Append each rule flow in order into the tree. Start from the tree's root level of source intervals.
 2. Merge flow's intervals with overlapping tree's intervals and create nodes for the resulting disjoint intervals accordingly.
@@ -174,10 +179,15 @@ isomorphic to each other to make them comparable. Essentially, at the end of thi
 in the other with potentially a different action (so, in fact, the trees are semi-isomoprhic).
 It is then a matter of iterating over all the flows to find ones with differing actions (Liu and Gouda 1245).
 
+---
+
 There are several pitfalls to this algorithm in its current state:
 1. Deep copying subtrees is time-consuming.
 2. Constructing an FDT for each policy and then shaping them to be semi-isomorphic is time-consuming.
 3. There is no room for parallelization in FDT construction due to the synchronous [appending new paths to the tree] nature of the construction algorithm.
+
+![Vertical construction algorithm](/assets/images/fdt/vert.gif)
+_Vertical construction algorithm for a firewall policy. Compare with horizontal below._
 
 Even though the overall efficiency of this solution is superior to the naive method present above (complexity analysis
 can be found at Liu and Gouda 1247), the policies it was benchmarked on (Liu and Gouda 1249) have orders of magnitude fewer rules
@@ -197,6 +207,9 @@ a horizontal level-based approach. I merge all the source intervals of all the f
 merge all the destination intervals, then protocols, then ports. This simultaneously avoids subtree copying and opens up
 the potential to parallelize.
 
+![Horizontal construction algorithm](/assets/images/fdt/horiz2.gif)
+_Horizontal construction algorithm for the same policy. Compare with vertical above._
+
 The result of the construction algorithm is a tree, whose differing flows are trivial to find by iterating over all flows
 to filter ones with more than one action leaf and whose actions differ.
 
@@ -206,23 +219,42 @@ and ports, both of which have small sets of commonly used values. Target protoco
 udp (17), and icmp (1) and target ports are http (80), https (443), and dns (53). These auxiliary changes prove effective
 in practice.
 
+| Method             | Sources | Destinations    | Protocols | Ports        | Total |
+|--------------------|---------|-----------------|-----------|--------------|-------|
+| serial             | 0.07    | 8.87            | 0.86      | 4.38         | 14.18 |
+| targeted parallel  | 0.07    | 1.07 (parallel) | 0.86      | 4.38         | 6.38  |
+| parallel and cache | 0.07    | 1.07 (parallel) | 0.86      | 1.19 (cache) | 3.19  |
+
+_A summary of FDT + speed enhancements performance on an enterprise policy with ~100,000 rules [results in minutes]._
+
 #### Simplifying the tree
 Merging overlapping intervals during the construction process can make the flows overly granular. Presenting results is
-then cumbersome and the firewall decision tree takes up more space than necessary. To simplify the reporting of differing
-flows and structure of the tree, we can union interval nodes whose subtrees are the same.
+then cumbersome and the firewall decision tree takes up more space than necessary.
 
+![Unsimplified tree](/assets/images/fdt/unopt.png)
+_A tree with 24 flows even though all of the flows can be encapsulated by 2 flows with unions of intervals._
+
+To simplify the reporting of differing flows and structure of the tree, we can union interval nodes whose subtrees are the same.
 Starting at the bottom of the tree at the port level, if two port nodes have the same action leaves, we can union the
 ports into one combined port node. Advancing up the tree to the protocol level, we check if any protocol nodes have equal subtrees,
 in which case we union them. We continue in this manner all the way up to the tree root. The idea of comparing child contents in
-this process is inspired by how Merkle trees work. The runtime complexity of this simplification algorithm is O(N) where
-N is the number of nodes in the tree since we visit each node once.
+this process is inspired by how Merkle trees work. The runtime complexity of this simplification algorithm is $$O(N)$$ where
+$$N$$ is the number of nodes in the tree since we visit each node once.
 
 The result is a simpler, more understandale set of flows.
 
+![Simplified tree](/assets/images/fdt/opt.png)
+_After simplification, the above tree reduces to 2 flows._
+
 ## Discussion and further work
 The described modifications to the firewall decision tree construction algorithm significantly improve performance and space.
-They enable parallelization through level-based construction and simplify the presentation of results.
+They enable parallelization through level-based construction and simplify the presentation of results. These enhancements
+make it feasible to conduct contextual firewall policy comparison at a massive scale.
 
 A consequence of building a tree from the rules of multiple policies as described is that this process supports more than
 two policies. In fact, each port node can have as many action leaves as there are policies, and the algorithm simply works.
 The other aforementioned benefits of using firewall decision trees are maintained as well.
+
+Further speed improvements could be made by preprocessing the flows before tree construction and splitting by (protocol, d-port)
+combo as mentioned in the improvements for the naive implementation. Another approach to consider is merging overlapping
+intervals for each field and then connecting intervals to their children to construct the levels of the tree.
