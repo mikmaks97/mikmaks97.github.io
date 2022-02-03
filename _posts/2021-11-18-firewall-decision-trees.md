@@ -164,7 +164,7 @@ level 2 is destination intervals, level 3 is protocol intervals, and level 4 is 
 At the end of each tree path is an action, so the actions can be considered the last level and they make up the leaves of the tree.
 Hence, every path of the tree is a flow, and the total number of unshadowed flows is equal to the number of paths/leaves of the tree.
 
-![Firewall decision tree visualized](/assets/images/fdt/fdt.png)
+![Firewall decision tree visualized](/assets/images/fdt/fdt.PNG)
 _A visual representation of a firewall decision tree. Internally protocols are stored as numeric intervals with equal start and end._
 
 The construction is described on page 1243 of Liu and Gouda, but I have abridged it here:
@@ -231,7 +231,7 @@ _A summary of FDT + speed enhancements performance on an enterprise policy with 
 Merging overlapping intervals during the construction process can make the flows overly granular. Presenting results is
 then cumbersome and the firewall decision tree takes up more space than necessary.
 
-![Unsimplified tree](/assets/images/fdt/unopt.png)
+![Unsimplified tree](/assets/images/fdt/unopt.PNG)
 _A tree with 24 flows even though all of the flows can be encapsulated by 2 flows with unions of intervals._
 
 To simplify the reporting of differing flows and structure of the tree, we can union interval nodes whose subtrees are the same.
@@ -243,7 +243,7 @@ $$N$$ is the number of nodes in the tree since we visit each node once.
 
 The result is a simpler, more understandale set of flows.
 
-![Simplified tree](/assets/images/fdt/opt.png)
+![Simplified tree](/assets/images/fdt/opt.PNG)
 _After simplification, the above tree reduces to 2 flows._
 
 ## Discussion and further work
